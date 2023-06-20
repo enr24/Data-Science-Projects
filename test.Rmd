@@ -1,0 +1,358 @@
+---
+title: "Test"
+author: "Emmanuel Rayappa"
+date: "5/23/2022"
+output:
+  pdf_document: default
+  html_document: default
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(jsonlite)
+library(readr)
+library(tidyverse)
+library(tidytext)
+library(textdata)
+library(tm)
+library(sentimentr)
+library(wordcloud)
+rm(list=ls())
+library(rvest)
+library(NLP)
+library(rJava)
+library(openNLP)
+library(ggmap)
+library(rworldmap)
+library(syuzhet)
+library(rlist)
+library(scales)
+library(formattable)
+```
+
+## EDA and File Extraction
+In this scenario, We want to conduct data analysis on the sentiment of words in a sample of 200 JSON (Java Script Object Notation). A function was made to extract the text in the files. Now we set conditions for the functions to extract text from files based on key words. In our case, we are interested in news relating to the NFL, specifically news regarding trades. As a result, we use the grepl function to specify the words "NFL", "trade", and "acquire". With the function, we are then able to extract articles based off the keywords that we used and focus on the text. The text is then converted into a data frame for analysis. 
+
+I then conducted Exploratory Data Analysis on the words that were there and found that ultimately, the word "the" was the most frequently occurring word. Now this word is considered a stop word and its frequent occurrence can cause other words that are more relevant (trade or loss) to not be the immediate result that we see. To correct this issue, we can simply use the stop words list and bind this into our data frame and remove stop words in the frame. 
+
+With the stop words being removed, this allows for us to conduct a more accurate analysis of frequently occurring words. In our case, the word "game" is the most frequently occurring word. We can also see the sentiment of all of the words. In this case we find that we have more words with "negative" sentiment than "positive" sentiment. We also can see what specific sentiment is within the text. A few examples of word emotions are fear, anger, disgust, and trust. The results that are observed are rather interesting as we wouldn't expect these emotions to be associated with news covering football. 
+
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+##### Now try to write a function to extract information from all news. 
+#Suppose the input x is the name of the file
+getwd()
+#setwd("C:/Users/eraya/OneDrive/Documents/School Work/Junior Year/MTH 365,366,362 Notes and Lab/R/Larger")
+extractnews = function(x){
+  news = fromJSON(x, flatten = TRUE)
+  text = news$text
+  # Suppose your key word is AAA and BBB
+  if(grepl("NFL", text, fixed = TRUE)|grepl("accquire", text, fixed = TRUE)|grepl("trade", text, fixed = TRUE)) # specifies certain words
+    return(text)
+  else
+    return(NULL)
+}
+filelist = list.files(pattern = ".*.json") #takes each file in the path
+#unlink("C:/Users/eraya/OneDrive/Documents/School Work/Junior Year/MTH 365,366,362 Notes and Lab/R/ Larger", recursive = TRUE)
+datalist = lapply(filelist, extractnews) 
+datafr = do.call("rbind", datalist)
+word = strsplit(datafr," ")
+wordlist = unlist(word)
+wordlist = tolower(wordlist)
+head(wordlist)
+wordlist_df = as.data.frame(wordlist)
+wordlist_df = as.data.frame(gsub("[[:punct:]]", "", as.matrix(wordlist))) 
+wordlist_df[, colSums(wordlist_df != "") != 0]
+head(wordlist_df)
+colnames(wordlist_df) <-c("word")
+word_count <-wordlist_df %>% count(word) %>% arrange(desc(n))
+colnames(word_count) <- c("word", "frequency")
+
+glimpse(stop_words)
+my_stop_words <- stop_words %>% select(-lexicon) %>% 
+  bind_rows(data.frame(word = c("https", "t.co", "rt", "password", "username", "login","account", "forgot", "*}","{*", ">", "<", "'", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "--", "the", " ", "", "sending", "traditional")))
+words_interesting <- wordlist_df %>% anti_join(my_stop_words)
+
+top20 <- words_interesting %>% count(word,sort=T) %>% slice(1:20)
+
+ggplot(top20, aes(x = reorder(word, n, function(n) -n), y = n)) + 
+  geom_histogram(stat = "identity") + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  xlab("Top 20 words")
+
+  
+
+
+glimpse(words_interesting)
+
+words_interesting %>% group_by(word) %>% tally(sort=TRUE) %>% slice(1:25) %>% ggplot(aes(x = reorder(word, 
+    n, function(n) -n), y = n)) + geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 60, 
+    hjust = 1)) + xlab("Interesting words") + ylab("Frequency")
+
+library(textdata)
+
+nrc_lex <- get_sentiments("nrc")
+fn_sentiment <- words_interesting %>% left_join(nrc_lex)
+fn_sentiment %>% filter(!is.na(sentiment)) %>% 
+  group_by(sentiment) %>% 
+  summarise(n=n())
+
+bing_lex <- get_sentiments("bing")
+fn_sentiment <- words_interesting %>% left_join(bing_lex)
+fn_sentiment %>% filter(!is.na(sentiment)) %>% group_by(sentiment) %>% summarise(n=n())
+
+nrc_lex %>% ggplot(aes(x = sentiment)) + geom_bar(fill = "blue")
+bing_lex %>% ggplot(aes(sentiment)) + geom_bar(fill = "magenta")
+```
+## NLP on Data
+
+In addition to examining the sentiment of the words from the file, we can examine specific words from the file. In this case, we can call for an examination of words relating to location and names to be examined from the files. Do to this, we use the Annotator Function to look for words relating to both people and location. However, we need to re-read all of the files and convert the words from the file into a string rather than a data frame. 
+
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+filelist = list.files(pattern = ".*.json") #takes each file in the path
+datalist = lapply(filelist, extractnews) 
+datafr = do.call("rbind", datalist)
+datafr[1]
+sent_annot = Maxent_Sent_Token_Annotator()
+word_annot = Maxent_Word_Token_Annotator()
+loc_annot = Maxent_Entity_Annotator(kind = "location") #annotate location
+people_annot = Maxent_Entity_Annotator(kind = "person") #annotate person
+df_string = as.String(datafr)
+annot.l1 = NLP::annotate(df_string, list(sent_annot,word_annot,loc_annot, people_annot))
+word_unique<- sapply(annot.l1$features, `[[`, "kind")
+k <- sapply(annot.l1$features, `[[`, "kind")
+word_locations = df_string[annot.l1[k == "location"]]
+word_people = df_string[annot.l1[k == "person"]]
+```
+## Accuracy of the algorithm for detecting locations
+
+Upon the files being read and also having the words be scanned, we can use the "unique" function to show us some of the words that are classified as a location. From the results, we see immediately that there are quite a few locations that are very well know such as San Diego, Buffalo, and Tennessee. However, there a few words from here that may not necessarily belong in this list. One of the first words that follows this is "4-yard". This word isn't a location that can be found on a map, but rather on a football field. the reason that this word may have ended up in this list is most likely because the word "at" or "on" preceded it which made the function believe that "4-yard" is a location.  There is also the case of "Sheriff Sharon". "Sheriff Sharon" is very much referencing the name of a person, which we later see in the list of people, but somehow makes the list of locations. A possible explanation for this is that there is a location named Sharon that is mentioned in the article. Another possible explanation is that following the words "Sheriff Sharon", there are words there referencing to a city that the sheriff has jurisdiction over. Between the two possible options, the former seems to be the more likely reason. 
+
+Another Case that challenges the accuracy of this algorithm is term "Patriots New Orleans". In this case, the reason that it makes an appearance is because of the fact that the word "New Orleans" is a city in the state of Louisiana. The reason for the term "Patriots" coming in front of it is most likely due to the fact that the Patriots played the New Orleans Saints in New Orleans.  
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+#unique(word_locations)
+```
+## Accuracy of the algorithm for detecting names
+
+We can now call fo a look at the list of people mentioned in the document. Whilst examining this list, we can see that there are a few prominent football stars in this this list like Mike Tomlin, Brett Favre, Tom Brady, Aaron Rodgers, Kobe Bryant, and a few more. the issue with this list however is that there are singular names in this list like the name "Ryan" (After [6]). This can cause ambiguity as to who is being referenced at that point. Could it be Buffalo Bills Head Coach Rex Ryan or is it Atlanta Falcons Quarterback Matt Ryan? In order to determine this, we would need to see that word in its context. 
+
+Another case where the accuracy of the algorithm can be questioned is the case of "Sheriff Sharon A. Wehrly". While this is in the correct place, its also worth noting that the first two words in that name "Sheriff Sharon" was found in the list of unique people. Are the two terms the same? It's very likely that they are and the reason that its making an appearance in both lists is because there is probably because there is a town named Sharon in the United States while this Sheriff happens to be named Sharon. 
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+#unique(word_people)
+```
+
+## Sentiment By word
+
+Now that we have seen the power of both NLP and sentiment analysis, we can actually run another informative tool related to sentimental analysis. What we want to see in which specific words are mentioned the most based on sentiment. In order to accomplish this, we first save information on the words (Which are provided through the fn_sentiment function) as a data frame. Following this, we can call for a plot to be made and have it show the top 25 words.We can specify more words to be shown but this can make reading the words on the graph harder. We can then call for a plot to be drawn showing the words by sentiment and how many times they make an appearance in the list. We can also specify for the plots to be divided by sentiment (Positive or Negative). 
+
+The top words that make fall under the sentiment of negative are "defensive" and "loss".  Interestingly, "defensive" has more appearances the "loss" when we would expect the word loss to appear as it carries more significance towards a game as the end result is classified as either a win or a loss.For the positive sentiment words, we find that the word "win" makes the most appearances followed by "top". The word "win" being at the top of this list isn't too surprising. It was mentioned during the negative sentiment results that "win" and "loss" are significant to sports as it relates to the outcome of the game as well as the teams record. "Top" being the second most common words isn't too suprising as this word is used by many sports writers as a way of saying "win".  
+
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+word_info <- fn_sentiment %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+head(word_info)
+
+word_info2 <- get_sentiment(fn_sentiment$word, "syuzhet")
+head(word_info2)
+
+
+
+```
+
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+word_info%>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 25) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+## A word Cloud
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+word_info %>%
+  with(wordcloud(word, n, max.words = 50))
+```
+
+
+## Specific people and places being mentioned (using a for loop to go through each file)
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+for(i in length(filelist)){
+filelist = list.files(pattern = ".*.json") #takes each file in the path
+datalist = lapply(filelist, extractnews) 
+datafr = do.call("rbind", datalist)
+datafr[1]
+sent_annot = Maxent_Sent_Token_Annotator()
+word_annot = Maxent_Word_Token_Annotator()
+loc_annot = Maxent_Entity_Annotator(kind = "location") #annotate location
+people_annot = Maxent_Entity_Annotator(kind = "person") #annotate person
+df_string = as.String(datafr)
+annot.l1 = NLP::annotate(df_string, list(sent_annot,word_annot,loc_annot, people_annot))
+word_unique<- sapply(annot.l1$features, `[[`, "kind")
+k <- sapply(annot.l1$features, `[[`, "kind")
+word_locations = df_string[annot.l1[k == "location"]]
+word_people = df_string[annot.l1[k == "person"]]
+#unique(word_locations)
+#unique(word_people)
+}
+
+```
+
+```{r}
+get_sentiment(word_locations, "syuzhet")
+```
+
+```{r}
+get_sentiment(word_people, "syuzhet")
+```
+
+## Specific locations mentioned throughout the files
+```{r}
+#word_locations
+#word_locations_sentiment <- as.data.frame(get_sentiment(word_locations, "bing"))
+```
+
+## Specific people mentioned throughout the files
+```{r,message = FALSE, warning=FALSE, echo=FALSE}
+glimpse(word_people)
+#word_people_sentiment <- as.data.frame(get_sentiment(word_people, "bing"))
+```
+
+## News by News
+
+```{r, message = FALSE, warning=FALSE, echo=FALSE}
+for(i in length(filelist)){
+filelist = list.files(pattern = ".*.json") #takes each file in the path
+datalist = lapply(filelist, extractnews) 
+datafr2 = do.call("rbind", datalist)
+words2 = strsplit(datafr, " ")
+head(words2)
+words2_string <- as.String(words2)
+}
+
+
+
+#for(i in length(filelist)){
+#filelist = list.files(pattern = ".*.json") #takes each file in the path
+#datalist = lapply(filelist, extractnews) 
+#datafr = do.call("rbind", datalist)
+#word = strsplit(datafr, " ")
+#wordlist = unlist(word)
+#wordlist = tolower(wordlist)
+#head(wordlist)
+#wordlist_df = as.data.frame(wordlist)
+#wordlist_df = as.data.frame(gsub("[[:punct:]]", "", as.matrix(wordlist))) 
+#wordlist_df[, colSums(wordlist_df != "") != 0]
+#wordlist_df = as.data.frame(wordlist)
+#wordlist_df = as.data.frame(gsub("[[:punct:]]", "", as.matrix(wordlist))) 
+#wordlist_df[, colSums(wordlist_df != "") != 0]
+#head(wordlist_df)
+
+
+
+
+
+#colnames(wordlist_df) <-c("word")
+#word_count <-wordlist_df %>% count(word) %>% arrange(desc(n))
+#glimpse(word_count)
+#colnames(word_count) <- c("word", "frequency")
+#glimpse(stop_words)
+#my_stop_words <- stop_words %>% select(-lexicon) %>% 
+  #bind_rows(data.frame(word = c("https", "t.co", "rt", "password", "username", "login","account", "forgot", "*}","{*", ">", "<", "'", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "--", "the", " ", "", "sending", "traditional")))
+#words_interesting <- wordlist_df %>% anti_join(my_stop_words)
+#head(words_interesting)
+#words_insteresting_string <- as.String(words_interesting)
+
+```
+
+
+```{r}
+sentiment_score <- get_sentiment(datafr, "syuzhet") # Is this for just one document or is this for the whole file?
+sentiment_score_df <- as.data.frame(sentiment_score)
+head(sentiment_score)
+sentiment_score_df %>% ggplot(aes(x = sentiment_score)) + geom_histogram()
+```
+
+
+```{r}
+filelist = list.files(pattern = ".*.json") #takes each file in the path
+datalist = lapply(filelist, extractnews) 
+datafr = do.call("rbind", datalist)
+sent_annot = Maxent_Sent_Token_Annotator()
+word_annot = Maxent_Word_Token_Annotator()
+#loc_annot = Maxent_Entity_Annotator(kind = "location") #annotate location
+people_annot = Maxent_Entity_Annotator(kind = "person") #annotate person
+score = rep(0, length(datafr))
+people_final = list()
+people_rep = c()
+for (i in 1:length(datafr)){
+datafr[i]
+df_string = as.String(datafr[i])
+annot.l1 = NLP::annotate(df_string, list(sent_annot,word_annot, people_annot))
+word_unique<- sapply(annot.l1$features, `[[`, "kind")
+k <- sapply(annot.l1$features, `[[`, "kind")
+#word_locations2 = df_string[annot.l1[k == "location"]]
+word_people2 = df_string[annot.l1[k == "person"]]
+#unique(word_locations2)
+score[i] = get_sentiment(df_string, "syuzhet")
+word_people2 <- unique(word_people2)
+people_rep <- c(people_rep, word_people2)
+people_count <- str_count(word_people2) # get their names in this frame
+people_count_2 <-cbind(word_people2, people_count)
+people_final[[i]] = people_count_2
+# find the news and find the sentimental score
+}
+
+listSearch = function(filelist, word_people2){
+  number = c()
+  for(i in 1:length(filelist)){
+    result = list.search(as.list(filelist[[i]]), any(.==word_people2))
+    if(length(result) > 0){
+      number = c(number, i)
+      number_df <- as.data.frame(number)
+    }
+  }
+  return(number_df)
+}
+
+people_rep <- unique(people_rep)
+sentiment_score_loop = c()
+for (i in 1:length(people_rep)){
+  index = listSearch(people_final, people_rep[i])
+  score[unlist(index)]
+  sum(score[unlist(index)])
+  sentiment_score_loop = c(sentiment_score_loop, sum(score[unlist(index)]))
+}
+people_score_df <- data.frame(people_rep,sentiment_score_loop)
+colnames(people_score_df) <- c("name", "score")
+people_score_df$score <- format(round(people_score_df$score, 2), nsmall = 2)
+people_score_df = people_score_df[grep(" ", people_score_df$name),]
+people_score_df$score <- as.numeric(as.character(people_score_df$score))
+view(people_score_df)
+```
+
+
+```{r,message=FALSE,echo=FALSE} 
+sentiment_people_score <-(get_sentiment(word_people2, "syuzhet"))
+sentiment_people_score_df <- as.data.frame(sentiment_people_score)
+#y = reorder(score, -table(score)[score])
+#ggplot(aes(reorder_within(score, -table(score)[score], name), y = score))
+
+people_score_df %>% arrange(desc(score)) %>% slice(1:20) %>% ggplot(aes(x = reorder_within(score, -table(score)[score], name), y = score)) + geom_col(fill = "magenta") + coord_flip() + ylab("Score") + xlab("Name") + ggtitle("Top 20 scores")
+
+#people_score_df %>% arrange(desc(score)) %>% slice(1:20) %>% ggplot(aes(x = reorder_within(score, -table(score)[score], name), y = score)) + geom_col(fill = "magenta") + coord_flip() + ylab("Score") + xlab("Name") + ggtitle("Top 20 scores")
+
+people_score_df %>% arrange(-desc(score)) %>% slice(1:20) %>% ggplot(aes(x = reorder_within(score, -table(score)[-score], name), y = score)) + geom_col(fill = "blue") + coord_flip() + ylab("Score") + xlab("Name") + ggtitle("Bottom 20 scores")
+
+ people_score_df %>% ggplot(aes(x = score)) + geom_histogram(fill = "green")  + xlab("score") + ylab("Frequency") + ggtitle("Score Distribution")
+ 
+#sentiment_score_df %>% ggplot(aes(x = sentiment_score)) + geom_histogram() + xlab("Score") + ylab("Frequency")
+
+
+```
