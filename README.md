@@ -1,2 +1,2 @@
-# Data-Science-Projects
-Please find attached some of the work that I have worked on
+# Data-Science-Research-Project
+This repository has the code used for my Research Project. My project focused on Sentimental Analysis of a sample of NFL Articles from the Associated Press which were stored as JSON files. I developed an algorithm to convert the files into text format and another algorithm to extract names and places that appeared in these articles and assign Sentiment Scores to the name based on the sentiment of other words in the article. I created visualizations of the Top-20 highest scoring names and the Top-20 Lowest Scoring names. I also created visualizations of the most common words assocaited with Positive (i.e. Lead, Victory, Top) and Negative Sentiment (i.e. Injury, Loss, Defensive). All algorithmic developemnt and Data Visualization was conducted using RStudio.
